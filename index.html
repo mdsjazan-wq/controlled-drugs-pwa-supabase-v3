@@ -1,0 +1,171 @@
+
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="theme-color" content="#B71C1C"/><link rel="manifest" href="manifest.webmanifest"/>
+<title>إدارة الأدوية المخدرة - جازان</title><link rel="stylesheet" href="styles.css"/></head>
+<body>
+<header id="app-header" style="display:none">
+  <div class="hdr">
+    <img src="logo.png" alt="شعار الهيئة"/>
+    <h1>إدارة الأدوية المخدرة - جازان</h1>
+    <div class="auth">
+      <button class="btn btn-outline" id="btn-logout">تسجيل الخروج</button>
+    </div>
+  </div>
+  <div class="nav">
+    <button class="active" data-tab="dashboard">لوحة التحكم</button>
+    <button data-tab="issue">صرف للمراكز</button>
+    <button data-tab="receive">استلام من الرياض</button>
+    <button data-tab="returns">إرجاع من مركز</button>
+    <button data-tab="reports">التقارير</button>
+    <button data-tab="adjust">تصحيح</button>
+    <button data-tab="settings">إعدادات</button>
+  </div>
+</header>
+
+<!-- Login Screen -->
+<div id="login-screen" class="login-wrap">
+  <div class="card login-card">
+    <div style="text-align:center;margin-bottom:12px">
+      <img src="logo.png" alt="logo" style="width:64px;height:64px"/><br/>
+      <strong>إدارة الأدوية المخدرة - جازان</strong>
+    </div>
+    <label>البريد الإلكتروني</label><input id="login-email" type="email" placeholder="you@example.com"/>
+    <label>كلمة المرور</label><input id="login-password" type="password" placeholder="••••••••"/>
+    <div class="row" style="margin-top:10px">
+      <button class="btn btn-primary" id="btn-login">دخول</button>
+      <button class="btn btn-outline" id="btn-signup">مستخدم جديد</button>
+    </div>
+    <div id="login-msg" style="margin-top:8px"></div>
+  </div>
+</div>
+
+<main id="app-main" class="container" style="display:none">
+<section id="tab-dashboard" class="tab card">
+  <h2>لوحة التحكم</h2>
+  <div class="kpis" id="kpi-cards"></div>
+  <div class="grid grid-2" style="margin-top:12px">
+    <div class="card">
+      <h2>رصيد المستودع (حسب الصنف)</h2>
+      <table class="table" id="warehouse-table"><thead><tr><th>الصنف</th><th>الرصيد</th><th>رجيع فارغ</th><th>رجيع منتهي</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>أرصدة المراكز الحالية</h2>
+      <div class="print-controls no-print">
+        <label>فلترة بالمركز:</label>
+        <select id="center-filter"></select>
+        <button class="btn btn-outline" onclick="window.print()">طباعة</button>
+      </div>
+      <table class="table" id="centers-table"><thead><tr><th>المركز</th><th>الصنف</th><th>الرصيد</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</section>
+
+<section id="tab-issue" class="tab card" hidden>
+  <h2>صرف للمراكز</h2>
+  <label>المركز</label><select id="issue-center"></select>
+  <label>الصنف</label><select id="issue-item"></select>
+  <label>الكمية</label><input id="issue-qty" type="number" min="1" step="1"/>
+  <label>التاريخ</label><input id="issue-date" type="date"/>
+  <div class="row"><button class="btn btn-primary" id="btn-issue">تنفيذ الصرف</button><button class="btn btn-outline" id="btn-issue-clear">مسح</button></div>
+  <div id="issue-msg"></div>
+</section>
+
+<section id="tab-receive" class="tab card" hidden>
+  <h2>استلام من الرياض</h2>
+  <label>الصنف</label><select id="receive-item"></select>
+  <label>الكمية</label><input id="receive-qty" type="number" min="1" step="1"/>
+  <label>التاريخ</label><input id="receive-date" type="date"/>
+  <div class="row"><button class="btn btn-primary" id="btn-receive">تسجيل الاستلام</button><button class="btn btn-outline" id="btn-receive-clear">مسح</button></div>
+  <div id="receive-msg"></div>
+</section>
+
+<section id="tab-returns" class="tab card" hidden>
+  <h2>إرجاع من مركز</h2>
+  <label>المركز</label><select id="return-center"></select>
+  <label>الصنف</label><select id="return-item"></select>
+  <label>الكمية</label><input id="return-qty" type="number" min="1" step="1"/>
+  <label>الحالة</label><select id="return-status"><option value="empty">فارغ</option><option value="expired">منتهي الصلاحية</option></select>
+  <label>التاريخ</label><input id="return-date" type="date"/>
+  <div class="row"><button class="btn btn-primary" id="btn-return">تسجيل الإرجاع</button><button class="btn btn-outline" id="btn-return-clear">مسح</button></div>
+  <div class="warning" style="margin-top:10px"><strong>تنبيه:</strong> الإرجاع (فارغ/منتهي) لا يزيد رصيد المستودع؛ فقط يُخصم من أرصدة المركز ويُسجل في الرجيع.</div>
+  <div id="return-msg"></div>
+</section>
+
+<section id="tab-reports" class="tab card" hidden>
+  <h2>التقارير</h2>
+  <div class="row no-print">
+    <button class="btn btn-outline" id="btn-export-csv">تصدير Excel (CSV)</button>
+    <button class="btn btn-outline" id="btn-export-pdf">تصدير PDF</button>
+  </div>
+  <div class="grid grid-2">
+    <div class="card"><h3>كشف حركة صنف</h3>
+      <label>اختر الصنف</label><select id="log-item"></select>
+      <table class="table" id="log-table"><thead><tr><th>التاريخ</th><th>النوع</th><th>المركز</th><th>الكمية</th><th>ملاحظة</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card"><h3>تقرير الرجيع</h3>
+      <table class="table" id="returns-table"><thead><tr><th>التاريخ</th><th>المركز</th><th>الصنف</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</section>
+
+<section id="tab-adjust" class="tab card" hidden>
+  <h2>تصحيح (لا يغيّر السجلات الأصلية)</h2>
+  <p class="warning">التصحيح يُسجّل في جدول مستقل (<code>adjustments</code>) ويُؤخذ بالحسبان في الحسابات. لا يغيّر سجلات الاستلام/الصرف/الإرجاع الأصلية.</p>
+  <div class="grid grid-3">
+    <div class="card">
+      <label>النوع</label><select id="adj-kind">
+        <option value="receipt">تصحيح استلام (مستودع)</option>
+        <option value="issue">تصحيح صرف (مركز)</option>
+        <option value="return_empty">تصحيح إرجاع فارغ</option>
+        <option value="return_expired">تصحيح إرجاع منتهي</option>
+      </select>
+      <label>المركز (إن وجد)</label><select id="adj-center"></select>
+      <label>الصنف</label><select id="adj-item"></select>
+      <label>الكمية (+ زيادة / - نقصان)</label><input id="adj-qty" type="number" step="1"/>
+      <label>التاريخ</label><input id="adj-date" type="date"/>
+      <label>ملاحظة</label><input id="adj-note" type="text" placeholder="سبب التصحيح"/>
+      <div class="row"><button class="btn btn-primary" id="btn-adj">تسجيل التصحيح</button></div>
+      <div id="adj-msg"></div>
+    </div>
+    <div class="card" style="grid-column: span 2;">
+      <h3>سجل التصحيحات</h3>
+      <table class="table" id="adj-table"><thead><tr><th>التاريخ</th><th>النوع</th><th>المركز</th><th>الصنف</th><th>الكمية</th><th>ملاحظة</th></tr></thead><tbody></tbody></table>
+      <small class="muted">إن لم يظهر الجدول، أنشئ جدول <code>adjustments</code> من سكربت SQL المرفق.</small>
+    </div>
+  </div>
+</section>
+
+<section id="tab-settings" class="tab card" hidden>
+  <h2>إعدادات</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>الأصناف: تعديل أسماء/أرصدة ابتدائية، إضافة صنف جديد</h3>
+      <div id="items-editor"></div>
+      <div class="row no-print">
+        <input id="new-item-name" placeholder="اسم صنف جديد" style="flex:1"/>
+        <input id="new-item-initial" type="number" placeholder="رصيد ابتدائي" style="width:160px"/>
+        <button class="btn btn-primary" id="btn-add-item">إضافة صنف</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>أرصدة ابتدائية للمراكز</h3>
+      <p><small class="muted">تحتاج عمود <code>initial</code> في جدول <code>centers</code>. إن لم يظهر الحقل تحت، نفّذ سكربت SQL لإضافته.</small></p>
+      <div id="centers-editor"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>مفاتيح الاتصال</h3>
+    <table class="table"><thead><tr><th>المفتاح</th><th>القيمة الحالية</th></tr></thead><tbody id="cfg-table"></tbody></table>
+  </div>
+</section>
+
+<div class="footer">© 2025 – جازان | شعار هيئة الهلال الأحمر السعودي مستخدم هنا لأغراض تعريفية.</div>
+</main>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js'));}</script>
+</body></html>
