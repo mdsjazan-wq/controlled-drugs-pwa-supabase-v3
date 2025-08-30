@@ -1,7 +1,7 @@
 /* =======================
    Controlled Drugs PWA (v3)
    app.js – Supabase + Auth + Adjustments + Reports + Exports
-   with per-center&item initials
+   with per-center&item initials + onAdjust
    ======================= */
 
 const $  = (s) => document.querySelector(s);
@@ -37,7 +37,7 @@ let items = [],
    AUTH
    ======================= */
 async function ensureAuth() {
-  if (!sb) { // وضع معاينة بدون Supabase
+  if (!sb) {
     $("#login-screen").style.display = "none";
     $("#app-header").style.display = "block";
     $("#app-main").style.display = "block";
@@ -74,23 +74,22 @@ const signOut = async () => {
    ======================= */
 async function loadAll() {
   if (!CFG.USE_SUPABASE || !sb) throw new Error("Supabase غير مفعّل.");
-  const i = await sb.from("items").select("*").order("id");
-  const c = await sb.from("centers").select("*").order("id");
-  const r = await sb.from("receipts").select("*").order("happened_at");
-  const s = await sb.from("issues").select("*").order("happened_at");
-  const t = await sb.from("returns").select("*").order("happened_at");
-  const ci = await sb.from("center_item_initials").select("*"); // ← الجديد
+  const i  = await sb.from("items").select("*").order("id");
+  const c  = await sb.from("centers").select("*").order("id");
+  const r  = await sb.from("receipts").select("*").order("happened_at");
+  const s  = await sb.from("issues").select("*").order("happened_at");
+  const t  = await sb.from("returns").select("*").order("happened_at");
+  const ci = await sb.from("center_item_initials").select("*");
   const err = i.error || c.error || r.error || s.error || t.error || ci.error;
   if (err) throw err;
 
-  items = i.data || [];
+  items   = i.data || [];
   centers = c.data || [];
   receipts = r.data || [];
-  issues = s.data || [];
+  issues   = s.data || [];
   returnsArr = t.data || [];
   cii = ci.data || [];
-  centersHasInitial =
-    !!(centers.length && Object.prototype.hasOwnProperty.call(centers[0], "initial"));
+  centersHasInitial = !!(centers.length && Object.prototype.hasOwnProperty.call(centers[0], "initial"));
 
   try {
     const ad = await sb.from("adjustments").select("*").order("happened_at");
@@ -116,7 +115,6 @@ const updateCenter = async (id, fields) => (await sb.from("centers").update(fiel
    ======================= */
 const adjSum = (fn) => adjustments.filter(fn).reduce((a, b) => a + Number(b.qty || 0), 0);
 
-// افتتاحي مركز/صنف
 function getCenterInitial(centerId, itemId) {
   const row = cii.find((r) => r.center_id === centerId && r.item_id === itemId);
   return Number(row?.initial || 0);
@@ -133,7 +131,7 @@ function computeWarehouseStock(itemId) {
 }
 
 function computeCenterStock(centerId, itemId) {
-  const base = getCenterInitial(centerId, itemId); // ← الجديد
+  const base = getCenterInitial(centerId, itemId);
   const iss = issues.filter((i) => i.center_id === centerId && i.item_id === itemId)
                     .reduce((a, b) => a + Number(b.qty), 0);
   const issAdj = adjSum((a) => a.kind === "issue" && a.center_id === centerId && a.item_id === itemId);
@@ -200,7 +198,6 @@ function renderDashboard() {
     kpi.appendChild(d);
   });
 
-  // Warehouse table
   const wtbody = $("#warehouse-table tbody");
   wtbody.innerHTML = "";
   items.forEach((it) => {
@@ -212,7 +209,6 @@ function renderDashboard() {
     wtbody.appendChild(tr);
   });
 
-  // Centers filter/table
   const filterSel = $("#center-filter");
   filterSel.innerHTML = "";
   const allOpt = document.createElement("option");
@@ -347,6 +343,7 @@ function renderAdjust() {
   populateSelect($("#adj-item"), items);
   $("#adj-date").value = today();
   const tbody = $("#adj-table tbody");
+  if (!tbody) return;
   tbody.innerHTML = "";
   adjustments.forEach((a) => {
     const it = items.find((i) => i.id === a.item_id);
@@ -358,7 +355,6 @@ function renderAdjust() {
 }
 
 function renderSettings() {
-  // محرر الأصناف
   const wrap = $("#items-editor");
   wrap.innerHTML = "";
   items.forEach((it) => {
@@ -404,7 +400,6 @@ function renderSettings() {
     }
   };
 
-  // محرر المراكز (اسم + initial إن وجد)
   const cwrap = $("#centers-editor");
   cwrap.innerHTML = "";
   centers.forEach((c) => {
@@ -441,7 +436,7 @@ function renderSettings() {
     });
   });
 
-  // محرر الافتتاحيات لكل مركز/صنف
+  // Per center/item initials editor
   const ciiWrap = document.getElementById("cii-editor");
   if (ciiWrap) {
     let html = '<table class="table"><thead><tr><th>المركز \\ الصنف</th>';
@@ -470,7 +465,6 @@ function renderSettings() {
           item_id: Number(inp.getAttribute("data-ci-item")),
           initial: Number(inp.value) || 0,
         }));
-        // upsert بدُفعات
         let idx = 0;
         while (idx < payload.length) {
           const batch = payload.slice(idx, idx + 500);
@@ -489,7 +483,6 @@ function renderSettings() {
     };
   }
 
-  // عرض مفاتيح الاتصال
   const t = $("#cfg-table");
   if (t) {
     t.innerHTML = "";
@@ -575,6 +568,39 @@ async function onReturn() {
   $("#return-qty").value = "";
 }
 
+/* ---- NEW: Adjustments handler ---- */
+async function onAdjust() {
+  const kind = document.getElementById('adj-kind').value;   // receipt | issue | return_empty | return_expired
+  const centerIdRaw = document.getElementById('adj-center').value;
+  const itemId = Number(document.getElementById('adj-item').value);
+  const qty = Number(document.getElementById('adj-qty').value);
+  const date = document.getElementById('adj-date').value || today();
+  const note = document.getElementById('adj-note').value.trim();
+  const msg = document.getElementById('adj-msg');
+
+  if (!itemId || !qty || qty === 0) {
+    msg.innerHTML = '<div class="warning">أدخل الصنف والكمية (يمكن أن تكون سالبة للتنقيص).</div>';
+    return;
+  }
+  let centerId = null;
+  if (kind !== 'receipt') {
+    centerId = Number(centerIdRaw);
+    if (!centerId) {
+      msg.innerHTML = '<div class="warning">اختر المركز لهذا النوع من التصحيح.</div>';
+      return;
+    }
+  }
+
+  await insertAdjustment(kind, itemId, centerId, qty, date, note);
+  await loadAll();
+  renderDashboard();
+  renderAdjust();
+  msg.innerHTML = '<div class="success">تم تسجيل التصحيح.</div>';
+
+  document.getElementById('adj-qty').value = '';
+  document.getElementById('adj-note').value = '';
+}
+
 /* =======================
    EXPORTS
    ======================= */
@@ -652,8 +678,8 @@ function bindButtons() {
   $("#btn-return-clear").addEventListener("click", () => ($("#return-qty").value = ""));
   $("#btn-export-csv").addEventListener("click", exportCSV);
   $("#btn-export-pdf").addEventListener("click", exportPDF);
+  document.getElementById('btn-adj').addEventListener('click', () => onAdjust().catch(e => alert(e.message))); // ← ربط زر التصحيح
 
-  // بعد تسجيل الدخول: بدّل الواجهة ثم حمّل البيانات
   const btnLogin = $("#btn-login");
   if (btnLogin) {
     btnLogin.addEventListener("click", async () => {
@@ -672,7 +698,6 @@ function bindButtons() {
     });
   }
 
-  // إنشاء مستخدم جديد (لا نسجل دخوله تلقائيًا)
   const btnSignup = $("#btn-signup");
   if (btnSignup) {
     btnSignup.addEventListener("click", async () => {
