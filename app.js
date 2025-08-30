@@ -1,6 +1,7 @@
 /* =======================
    Controlled Drugs PWA (v3)
    app.js – Supabase + Auth + Adjustments + Reports + Exports
+   with per-center&item initials
    ======================= */
 
 const $  = (s) => document.querySelector(s);
@@ -29,14 +30,14 @@ let items = [],
   issues = [],
   returnsArr = [],
   adjustments = [],
-  centersHasInitial = false;
+  centersHasInitial = false,
+  cii = []; // center_item_initials
 
 /* =======================
    AUTH
    ======================= */
 async function ensureAuth() {
-  // إذا لم نفعّل Supabase نعرض التطبيق مباشرة (وضع معاينة)
-  if (!sb) {
+  if (!sb) { // وضع معاينة بدون Supabase
     $("#login-screen").style.display = "none";
     $("#app-header").style.display = "block";
     $("#app-main").style.display = "block";
@@ -78,7 +79,8 @@ async function loadAll() {
   const r = await sb.from("receipts").select("*").order("happened_at");
   const s = await sb.from("issues").select("*").order("happened_at");
   const t = await sb.from("returns").select("*").order("happened_at");
-  const err = i.error || c.error || r.error || s.error || t.error;
+  const ci = await sb.from("center_item_initials").select("*"); // ← الجديد
+  const err = i.error || c.error || r.error || s.error || t.error || ci.error;
   if (err) throw err;
 
   items = i.data || [];
@@ -86,6 +88,7 @@ async function loadAll() {
   receipts = r.data || [];
   issues = s.data || [];
   returnsArr = t.data || [];
+  cii = ci.data || [];
   centersHasInitial =
     !!(centers.length && Object.prototype.hasOwnProperty.call(centers[0], "initial"));
 
@@ -113,6 +116,12 @@ const updateCenter = async (id, fields) => (await sb.from("centers").update(fiel
    ======================= */
 const adjSum = (fn) => adjustments.filter(fn).reduce((a, b) => a + Number(b.qty || 0), 0);
 
+// افتتاحي مركز/صنف
+function getCenterInitial(centerId, itemId) {
+  const row = cii.find((r) => r.center_id === centerId && r.item_id === itemId);
+  return Number(row?.initial || 0);
+}
+
 function computeWarehouseStock(itemId) {
   const item = items.find((x) => x.id === itemId);
   const base = item?.initial || 0;
@@ -124,16 +133,15 @@ function computeWarehouseStock(itemId) {
 }
 
 function computeCenterStock(centerId, itemId) {
-  const iss = issues
-    .filter((i) => i.center_id === centerId && i.item_id === itemId)
-    .reduce((a, b) => a + Number(b.qty), 0);
+  const base = getCenterInitial(centerId, itemId); // ← الجديد
+  const iss = issues.filter((i) => i.center_id === centerId && i.item_id === itemId)
+                    .reduce((a, b) => a + Number(b.qty), 0);
   const issAdj = adjSum((a) => a.kind === "issue" && a.center_id === centerId && a.item_id === itemId);
-  const ret = returnsArr
-    .filter((r) => r.center_id === centerId && r.item_id === itemId)
-    .reduce((a, b) => a + Number(b.qty), 0);
+  const ret = returnsArr.filter((r) => r.center_id === centerId && r.item_id === itemId)
+                        .reduce((a, b) => a + Number(b.qty), 0);
   const retAdjEmpty = adjSum((a) => a.kind === "return_empty" && a.center_id === centerId && a.item_id === itemId);
   const retAdjExp   = adjSum((a) => a.kind === "return_expired" && a.center_id === centerId && a.item_id === itemId);
-  return (iss + issAdj) - (ret + retAdjEmpty + retAdjExp);
+  return base + (iss + issAdj) - (ret + retAdjEmpty + retAdjExp);
 }
 
 function computeReturnTotals(itemId, status) {
@@ -350,6 +358,7 @@ function renderAdjust() {
 }
 
 function renderSettings() {
+  // محرر الأصناف
   const wrap = $("#items-editor");
   wrap.innerHTML = "";
   items.forEach((it) => {
@@ -395,6 +404,7 @@ function renderSettings() {
     }
   };
 
+  // محرر المراكز (اسم + initial إن وجد)
   const cwrap = $("#centers-editor");
   cwrap.innerHTML = "";
   centers.forEach((c) => {
@@ -431,17 +441,68 @@ function renderSettings() {
     });
   });
 
+  // محرر الافتتاحيات لكل مركز/صنف
+  const ciiWrap = document.getElementById("cii-editor");
+  if (ciiWrap) {
+    let html = '<table class="table"><thead><tr><th>المركز \\ الصنف</th>';
+    items.forEach((it) => (html += `<th>${it.name}</th>`));
+    html += "</tr></thead><tbody>";
+    centers.forEach((c) => {
+      html += `<tr><td style="text-align:right">${c.name}</td>`;
+      items.forEach((it) => {
+        const val = getCenterInitial(c.id, it.id);
+        html += `<td><input type="number" style="width:90px" value="${val}"
+                 data-ci-center="${c.id}" data-ci-item="${it.id}" /></td>`;
+      });
+      html += "</tr>";
+    });
+    html += `</tbody></table>
+             <div class="row no-print">
+               <button class="btn btn-primary" id="btn-save-cii">حفظ الافتتاحيات</button>
+             </div>`;
+    ciiWrap.innerHTML = html;
+
+    document.getElementById("btn-save-cii").onclick = async () => {
+      try {
+        const inputs = ciiWrap.querySelectorAll("input[data-ci-center]");
+        const payload = Array.from(inputs).map((inp) => ({
+          center_id: Number(inp.getAttribute("data-ci-center")),
+          item_id: Number(inp.getAttribute("data-ci-item")),
+          initial: Number(inp.value) || 0,
+        }));
+        // upsert بدُفعات
+        let idx = 0;
+        while (idx < payload.length) {
+          const batch = payload.slice(idx, idx + 500);
+          const { error } = await sb
+            .from("center_item_initials")
+            .upsert(batch, { onConflict: "center_id,item_id" });
+          if (error) throw error;
+          idx += 500;
+        }
+        alert("تم حفظ الأرصدة الافتتاحية لكل مركز/صنف.");
+        await loadAll();
+        renderDashboard();
+      } catch (e) {
+        alert("فشل الحفظ: " + e.message);
+      }
+    };
+  }
+
+  // عرض مفاتيح الاتصال
   const t = $("#cfg-table");
-  t.innerHTML = "";
-  [
-    ["USE_SUPABASE", String(!!CFG.USE_SUPABASE)],
-    ["SUPABASE_URL", CFG.SUPABASE_URL || "-"],
-    ["SUPABASE_ANON_KEY", CFG.SUPABASE_ANON_KEY ? CFG.SUPABASE_ANON_KEY.slice(0, 6) + "..." : "-"],
-  ].forEach((r) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td><code>${r[0]}</code></td><td>${r[1]}</td>`;
-    t.appendChild(tr);
-  });
+  if (t) {
+    t.innerHTML = "";
+    [
+      ["USE_SUPABASE", String(!!CFG.USE_SUPABASE)],
+      ["SUPABASE_URL", CFG.SUPABASE_URL || "-"],
+      ["SUPABASE_ANON_KEY", CFG.SUPABASE_ANON_KEY ? CFG.SUPABASE_ANON_KEY.slice(0, 6) + "..." : "-"],
+    ].forEach((r) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><code>${r[0]}</code></td><td>${r[1]}</td>`;
+      t.appendChild(tr);
+    });
+  }
 }
 
 /* =======================
@@ -567,14 +628,8 @@ async function exportPDF() {
     rows.forEach((r) => {
       let x = 40;
       y += 14;
-      if (y > 780) {
-        doc.addPage();
-        y = 40;
-      }
-      r.forEach((cell) => {
-        doc.text(String(cell).slice(0, 30), x, y);
-        x += 140;
-      });
+      if (y > 780) { doc.addPage(); y = 40; }
+      r.forEach((cell) => { doc.text(String(cell).slice(0, 30), x, y); x += 140; });
     });
     y += 16;
   }
@@ -598,7 +653,7 @@ function bindButtons() {
   $("#btn-export-csv").addEventListener("click", exportCSV);
   $("#btn-export-pdf").addEventListener("click", exportPDF);
 
-  // 🔴 التصحيح هنا: بعد تسجيل الدخول نستدعي ensureAuth ثم afterAuth
+  // بعد تسجيل الدخول: بدّل الواجهة ثم حمّل البيانات
   const btnLogin = $("#btn-login");
   if (btnLogin) {
     btnLogin.addEventListener("click", async () => {
@@ -608,15 +663,16 @@ function bindButtons() {
       try {
         await signInEmailPassword(email, pass);
         msg.innerHTML = '<div class="success">تم تسجيل الدخول.</div>';
-        await ensureAuth(); // يبدّل من شاشة الدخول إلى التطبيق
-        await afterAuth();  // يحمّل البيانات ويعرض اللوحات
+        await ensureAuth();
+        await loadAll().catch(()=>{});
+        renderDashboard(); renderIssue(); renderReceive(); renderReturns(); renderReports(); renderAdjust(); renderSettings();
       } catch (e) {
         msg.innerHTML = '<div class="warning">' + e.message + "</div>";
       }
     });
   }
 
-  // (اختياري) بعد إنشاء مستخدم جديد لا نسجّل دخوله تلقائيًا
+  // إنشاء مستخدم جديد (لا نسجل دخوله تلقائيًا)
   const btnSignup = $("#btn-signup");
   if (btnSignup) {
     btnSignup.addEventListener("click", async () => {
@@ -632,9 +688,7 @@ function bindButtons() {
     });
   }
 
-  $("#btn-logout").addEventListener("click", async () => {
-    await signOut();
-  });
+  $("#btn-logout").addEventListener("click", async () => { await signOut(); });
 }
 
 async function afterAuth() {
